@@ -1,5 +1,6 @@
 import itertools
 import json
+
 from pkg_resources import parse_version
 import time
 
@@ -8,7 +9,8 @@ from ansible.module_utils.kafka_protocol import (
     ListPartitionReassignmentsRequest_v0,
     DescribeConfigsRequest_v1,
     DescribeClientQuotasRequest_v0,
-    AlterClientQuotasRequest_v0
+    AlterClientQuotasRequest_v0,
+    OffsetDeleteRequest_v0
 )
 from kafka.client_async import KafkaClient
 from kazoo.client import KazooClient
@@ -27,9 +29,14 @@ from kafka.protocol.admin import (
     CreatePartitionsRequest_v0,
     AlterConfigsRequest_v0
 )
+
 from kafka.protocol.offset import (
     OffsetRequest_v1
 )
+
+from kafka.protocol.commit import OffsetFetchRequest_v2,\
+     GroupCoordinatorRequest_v0
+
 from kafka.protocol.group import MemberAssignment, ProtocolMetadata
 import kafka.errors
 from kafka.errors import IllegalArgumentError
@@ -182,6 +189,61 @@ class KafkaManager:
                         kafka.errors.for_code(error_code).description
                     )
                 )
+
+    def get_offsets_for_consumer_group(self, consumer_group=None):
+        cluster = self.client.cluster
+        brokers = cluster.brokers()
+
+        # coordinating broker
+        consumer_coordinator = {}
+
+        # Ensure connections to all brokers
+        for broker in brokers:
+            while not self.client.is_ready(broker.nodeId):
+                self.client.ready(broker.nodeId)
+                self.client.poll()
+
+        # Identify which broker is coordinating this consumer group
+        response = self.send_request_and_get_response(
+                 GroupCoordinatorRequest_v0(consumer_group),
+                 next(iter(brokers)).nodeId
+                 )
+
+        consumer_coordinator = response.coordinator_id
+
+        return self.send_request_and_get_response(
+            OffsetFetchRequest_v2(consumer_group, None), consumer_coordinator)
+
+    def delete_group_offset(self, group_id, topics, check_mode):
+
+        consumed_topics = map(lambda e: e[0],  # to get topic_name
+                              self.get_offsets_for_consumer_group(group_id)
+                              .topics)
+
+        changed = False
+
+        topics_partitions = []
+        for topic in topics:
+            topic_name = topic['name']
+            partitons = topic['partitions']
+            if(partitons is None):
+                partitons = [key for key in
+                             self.get_partitions_for_topic(topic_name).keys()]
+            topics_partitions.append((topic_name, partitons))
+            if(topic_name in consumed_topics):
+                changed = True
+
+        request = OffsetDeleteRequest_v0(
+            group_id=group_id, topics=topics_partitions)
+
+        if not check_mode:
+            response = self.send_request_and_get_response(request)
+            if(response.error_code != 0):
+                raise KafkaManagerError(
+                        'Error while deleting consumer group ' +
+                        '%s for topics %s' % (group_id, topics)
+                    )
+        return changed
 
     @staticmethod
     def _convert_create_acls_resource_request_v0(acl_resource):

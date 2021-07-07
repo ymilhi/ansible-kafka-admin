@@ -54,6 +54,8 @@ acl_defaut_configuration = {
     'acl_pattern_type': 'literal'
 }
 
+cg_defaut_configuration = {}
+
 quotas_default_configuration = {}
 
 sasl_default_configuration = {
@@ -293,6 +295,32 @@ def call_kafka_quotas(
     return results
 
 
+def call_kafka_consumer_group(
+        host,
+        args=None,
+        check=False
+):
+    results = []
+    if args is None:
+        args = {}
+    if 'sasl_plain_username' in args:
+        envs = env_sasl
+    else:
+        envs = env_no_sasl
+    for env in envs:
+        protocol_version = env['protocol_version']
+
+        module_args = {
+            'api_version': protocol_version,
+            'bootstrap_servers': env['kfk_addr'],
+        }
+        module_args.update(args)
+        module_args = "{{ %s }}" % json.dumps(module_args)
+        results.append(host.ansible('kafka_consumer_group',
+                                    module_args, check=check))
+    return results
+
+
 def call_kafka_acl(
         host,
         args=None,
@@ -389,12 +417,29 @@ def ensure_kafka_topic_with_zk(host, topic_defaut_configuration,
     return call_kafka_topic_with_zk(host, call_config, check)
 
 
+def ensure_kafka_consumer_group(host, test_consumer_group_configuration,
+                                check=False):
+    return call_kafka_consumer_group(host, test_consumer_group_configuration,
+                                     check)
+
+
 def ensure_kafka_acl(host, test_acl_configuration, check=False):
     return call_kafka_acl(host, test_acl_configuration, check)
 
 
 def ensure_kafka_acls(host, test_acl_configuration, check=False):
     return call_kafka_acls(host, test_acl_configuration, check)
+
+
+def check_unconsumed_topic(consumer_group, unconsumed_topic, kafka_servers):
+    kafka_client = KafkaManager(
+        bootstrap_servers=kafka_servers,
+        api_version=(2, 4, 0)
+    )
+    consumed_topics = kafka_client.get_consumed_topic_for_consumer_group(
+        consumer_group)
+
+    assert unconsumed_topic not in consumed_topics
 
 
 def check_configured_topic(host, topic_configuration,
@@ -621,7 +666,8 @@ def check_configured_quotas_zookeeper(host, quotas_configuration, zk_server):
             zk.close()
 
 
-def produce_and_consume_topic(topic_name, total_msg, consumer_group):
+def produce_and_consume_topic(topic_name, total_msg, consumer_group,
+                              close_consumer=False):
     for env in env_no_sasl:
         server = env['kfk_addr']
 
@@ -651,7 +697,9 @@ def produce_and_consume_topic(topic_name, total_msg, consumer_group):
 
         # will commit offset to 1
         consumer.commit()
-        # voluntary dont close the client to keep the consumer group alive
+        # Consumer group is kept alive if specified (close_consumer=False)
+        if close_consumer:
+            consumer.close()
 
 
 def ensure_idempotency(func, *args, **kwargs):

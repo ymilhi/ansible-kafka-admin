@@ -14,6 +14,8 @@ from kafka.protocol.api import Request, Response
 from kafka.protocol.admin import (
     DescribeAclsRequest_v0
 )
+from kafka.protocol.commit import OffsetFetchRequest_v2,\
+     GroupCoordinatorRequest_v0
 
 
 class DescribeConfigsResponseV0(Response):
@@ -172,6 +174,33 @@ class KafkaManager(object):
                 raise Exception(err_message)
             for _, value, _, _, _ in config_entries:
                 return value
+
+    def get_consumed_topic_for_consumer_group(self, consumer_group=None):
+        cluster = self.client.cluster
+        brokers = cluster.brokers()
+
+        # coordinating broker
+        consumer_coordinator = {}
+
+        # Ensure connections to all brokers
+        for broker in brokers:
+            while not self.client.is_ready(broker.nodeId):
+                self.client.ready(broker.nodeId)
+                self.client.poll()
+
+        # Identify which broker is coordinating this consumer group
+        response = self.send_request_and_get_response(
+                 GroupCoordinatorRequest_v0(consumer_group),
+                 next(iter(brokers)).nodeId
+                 )
+
+        consumer_coordinator = response.coordinator_id
+
+        response = self.send_request_and_get_response(
+            OffsetFetchRequest_v2(consumer_group, None), consumer_coordinator)
+
+        # to get topic_name
+        return map(lambda e: e[0], response.topics)
 
     @staticmethod
     def _map_to_quota_resources(entries):
