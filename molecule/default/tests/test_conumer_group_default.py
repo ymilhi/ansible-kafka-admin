@@ -11,6 +11,7 @@ from tests.ansible_utils import (
     get_topic_name,
     cg_defaut_configuration,
     topic_defaut_configuration,
+    sasl_default_configuration,
     ensure_kafka_topic,
     check_unconsumed_topic,
     ensure_kafka_consumer_group,
@@ -37,7 +38,6 @@ def test_delete_consumer_offset(host):
     """
     # Given
     topic_name1 = get_topic_name()
-    topic_name2 = get_topic_name()
     consumer_group = get_consumer_group()
 
     ensure_kafka_topic(
@@ -45,16 +45,9 @@ def test_delete_consumer_offset(host):
         topic_defaut_configuration,
         topic_name1
     )
-    ensure_kafka_topic(
-        host,
-        topic_defaut_configuration,
-        topic_name2
-    )
     time.sleep(0.3)
 
     produce_and_consume_topic(topic_name1, 1, consumer_group, True)
-    produce_and_consume_topic(topic_name2, 1, consumer_group, False)
-
     time.sleep(0.3)
 
     # When
@@ -65,9 +58,12 @@ def test_delete_consumer_offset(host):
         'action': 'delete',
         'api_version': '2.4.0',
         'topics': [{
-            'name': topic_name1
+            'name': topic_name1,
+            'partitions': [0]
         }]
     })
+
+    test_cg_configuration.update(sasl_default_configuration)
     ensure_idempotency(
         ensure_kafka_consumer_group(
             host,

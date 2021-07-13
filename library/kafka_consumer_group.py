@@ -99,7 +99,7 @@ def main():
     except KafkaError:
         e = get_exception()
         module.fail_json(
-            msg='Error while deletting kafka consumer group offset: %s' % e
+            msg='Error while deleting kafka consumer group offset: %s' % e
         )
     except Exception:
         e = get_exception()

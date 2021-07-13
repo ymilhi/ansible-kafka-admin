@@ -219,7 +219,6 @@ class KafkaManager:
         consumed_topics = map(lambda e: e[0],  # to get topic_name
                               self.get_offsets_for_consumer_group(group_id)
                               .topics)
-
         changed = False
 
         topics_partitions = []
@@ -238,12 +237,18 @@ class KafkaManager:
 
         if not check_mode:
             response = self.send_request_and_get_response(request)
+            for topic, partitions in response.topics:
+                raise KafkaManagerError(partitions[0])
             if(response.error_code != 0):
                 raise KafkaManagerError(
                         'Error while deleting consumer group ' +
                         '%s for topics %s' % (group_id, topics)
                     )
         return changed
+
+    @staticmethod
+    def _ensure_partitions_error_code_0(response):
+        raise KafkaManagerError(response.topics)
 
     @staticmethod
     def _convert_create_acls_resource_request_v0(acl_resource):
